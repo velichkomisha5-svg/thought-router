@@ -1,0 +1,15 @@
+{
+  "name": "thought-router",
+  "version": "1.0.0",
+  "scripts": {
+    "start": "expo start",
+    "ios": "expo start --ios"
+  },
+  "dependencies": {
+    "expo": "~51.0.0",
+    "expo-file-system": "~17.0.1",
+    "react": "18.2.0",
+    "react-native": "0.74.1"
+  },
+  "private": true
+}
