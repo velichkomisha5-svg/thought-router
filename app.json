@@ -1,0 +1,19 @@
+{
+  "expo": {
+    "name": "ThoughtRouter",
+    "slug": "thought-router",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.velychko.thoughtrouter",
+      "infoPlist": {
+        "NSMicrophoneUsageDescription": "Доступ к микрофону необходим для записи аудиозаметок.",
+        "UIFileSharingEnabled": true,
+        "LSSupportsOpeningDocumentsInPlace": true
+      }
+    }
+  }
+}
