@@ -24,7 +24,7 @@ jobs:
       - name: Compile App without signing
         run: |
           cd ios
-          xcodebuild -workspace ThoughtRouter.xcworkspace -scheme ThoughtRouter -configuration Release -sdk iphoneos CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO
+          xcodebuild -workspace ThoughtRouter.xcworkspace -scheme ThoughtRouter -configuration Release -sdk iphoneos -derivedDataPath build CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO
           
       - name: Package into IPA
         run: |
