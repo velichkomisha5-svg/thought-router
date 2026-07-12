@@ -16,6 +16,7 @@ import {
 import * as FileSystem from 'expo-file-system';
 import { Audio } from 'expo-av';
 
+// Обязательно вставьте ваш рабочий ключ от Google AI Studio
 const GEMINI_API_KEY = "AQ.Ab8RN6JjHcuOOg-U0O5CQx9KD7FVjjKUVT70-HoVTK2sy5cgVg";
 
 export default function App() {
@@ -103,7 +104,8 @@ export default function App() {
         requestBody.contents[0].parts.push({ text: systemInstruction }, { text: `Input: "${text}"` });
       }
 
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`, {
+      // ВНИМАНИЕ: Здесь обновлена конечная точка API на актуальную gemini-3.5-flash
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${GEMINI_API_KEY}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(requestBody)
