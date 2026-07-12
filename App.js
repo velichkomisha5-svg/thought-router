@@ -24,7 +24,6 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [loadingStatus, setLoadingStatus] = useState('');
   
-  // Состояния для аудиозаписи
   const [recording, setRecording] = useState(null);
   const [isRecording, setIsRecording] = useState(false);
   const [audioBase64, setAudioBase64] = useState(null);
@@ -41,24 +40,18 @@ export default function App() {
     try {
       const permission = await Audio.requestPermissionsAsync();
       if (permission.status !== 'granted') {
-        Alert.alert("Доступ запрещен", "Необходим доступ к микрофону для записи мыслей.");
+        Alert.alert("Отклонено", "Нет доступа к микрофону.");
         return;
       }
 
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS: true,
-        playsInSilentModeIOS: true,
-      });
-
-      const { recording: newRecording } = await Audio.Recording.createAsync(
-        Audio.RecordingOptionsPresets.HIGH_QUALITY
-      );
+      await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
+      const { recording: newRecording } = await Audio.Recording.createAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
       
       setRecording(newRecording);
       setIsRecording(true);
       setAudioBase64(null);
     } catch (err) {
-      Alert.alert("Ошибка записи", "Не удалось запустить микрофон: " + err.message);
+      Alert.alert("Системная ошибка", err.message);
     }
   };
 
@@ -68,23 +61,18 @@ export default function App() {
       setIsRecording(false);
       await recording.stopAndUnloadAsync();
       const uri = recording.getURI();
-      
-      // Конвертация записанного аудиофайла в Base64 для передачи в Gemini API
-      const base64Data = await FileSystem.readAsStringAsync(uri, {
-        encoding: FileSystem.EncodingType.Base64,
-      });
+      const base64Data = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
       
       setAudioBase64(base64Data);
       setRecording(null);
-      Alert.alert("Аудио записано", "Голосовая мысль готова к маршрутизации.");
     } catch (err) {
-      Alert.alert("Ошибка остановки", "Не удалось сохранить аудио: " + err.message);
+      Alert.alert("Ошибка файловой системы", err.message);
     }
   };
 
   const handleProcessThought = async () => {
     if (!text.trim() && !audioBase64) {
-      Alert.alert("Ошибка ввода", "Введите текст или запишите голосовую заметку.");
+      Alert.alert("Блокировка", "Отсутствуют входные данные.");
       return;
     }
 
@@ -92,111 +80,99 @@ export default function App() {
     Keyboard.dismiss();
     
     try {
-      let requestBody = {};
-      const systemInstruction = `Проанализируй входящие данные (текст или аудио). Верни строго JSON объект с тремя полями без какого-либо дополнительного текста вокруг: 
-      "category" (строго одно из значений: Учеба, Работа, Расходы, ПК), 
-      "markdown" (красиво структурированный текст заметки для Obsidian с YAML-фронтматером сверху, содержащим специфичные для домена метаданные), 
-      "visualPrompt" (подробный промпт на английском языке для генерации точной блок-схемы/алгоритма действий модели Imagen без артефактов текста).`;
+      const systemInstruction = `You are a strict data routing core for Obsidian. Analyze the input. Return raw, valid JSON only. No markdown wrappers like \`\`\`json.
+      Structure:
+      {
+        "isFinance": boolean,
+        "category": "String. Determine a short, precise folder name for this context (e.g., 'Учеба', 'Работа', 'Тренировки'). If isFinance is true, use 'Финансы'.",
+        "markdown": "String. Formatted Obsidian note with YAML. If isFinance, leave empty.",
+        "visualPrompt": "String. Detailed Imagen 3 prompt. Empty if not needed or isFinance.",
+        "financeData": { "item": "String", "amount": Number, "currency": "String" } // include only if isFinance
+      }`;
+
+      let requestBody = {
+        contents: [{ parts: [] }],
+        generationConfig: { responseMimeType: "application/json" }
+      };
 
       if (audioBase64) {
-        setLoadingStatus('Расшифровка аудио и анализ...');
-        requestBody = {
-          contents: [{
-            parts: [
-              { text: systemInstruction },
-              { inlineData: { mimeType: "audio/m4a", data: audioBase64 } }
-            ]
-          }]
-        };
+        setLoadingStatus('Декодирование и анализ...');
+        requestBody.contents[0].parts.push({ text: systemInstruction }, { inlineData: { mimeType: "audio/m4a", data: audioBase64 } });
       } else {
-        setLoadingStatus('Анализ текста...');
-        requestBody = {
-          contents: [{
-            parts: [{
-              text: `${systemInstruction}\n\nВходящий текст: "${text}"`
-            }]
-          }]
-        };
+        setLoadingStatus('Семантический анализ...');
+        requestBody.contents[0].parts.push({ text: systemInstruction }, { text: `Input: "${text}"` });
       }
 
-      const geminiResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`, {
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(requestBody)
       });
 
-      const geminiData = await geminiResponse.json();
-      if (!geminiData.candidates || geminiData.candidates.length === 0) {
-        throw new Error("Некорректный ответ от текстового API.");
-      }
-      
-      const resultText = geminiData.candidates[0].content.parts[0].text;
-      
-      // Защищенное извлечение JSON регулярным выражением
-      const jsonMatch = resultText.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) {
-        throw new Error("API не вернуло валидный JSON-объект: " + resultText);
-      }
-      
-      const { category, markdown, visualPrompt } = JSON.parse(jsonMatch[0].trim());
+      const data = await response.json();
+      if (data.error) throw new Error(data.error.message);
+      if (!data.candidates) throw new Error("Сбой конвейера: Пустой ответ.");
 
-      // Валидация категории во избежание сбоев путей iOS
-      const validCategories = ['Учеба', 'Работа', 'Расходы', 'ПК'];
-      const secureCategory = validCategories.includes(category) ? category : 'Идеи';
+      const cleanJson = JSON.parse(data.candidates[0].content.parts[0].text.trim());
+      const { isFinance, category, markdown, visualPrompt, financeData } = cleanJson;
 
-      // Генерация безопасного имени файла
-      const timestamp = Date.now();
-      const safeTextSnippet = text.trim() ? text.trim().substring(0, 10).replace(/[^a-zA-Zа-яА-Я0-9]/g, '_') : 'voice';
-      const fileName = `${secureCategory}_${safeTextSnippet}_${timestamp}`;
-      
-      const targetDir = `${FileSystem.documentDirectory}${secureCategory}/`;
-      const attachmentsDir = `${FileSystem.documentDirectory}attachments/`;
-
+      const safeCategory = category.replace(/[^a-zA-Zа-яА-Я0-9\s-]/g, '').trim();
+      const targetDir = `${FileSystem.documentDirectory}${safeCategory}/`;
       await FileSystem.makeDirectoryAsync(targetDir, { intermediates: true });
-      await FileSystem.makeDirectoryAsync(attachmentsDir, { intermediates: true });
 
-      let mdContent = markdown;
-
-      if (generateVisual) {
-        setLoadingStatus('Генерация визуальной схемы...');
-        const imagenResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-002:generateImages?key=${GEMINI_API_KEY}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            numberOfImages: 1,
-            prompt: visualPrompt,
-            aspectRatio: "1:1",
-            outputMimeType: "image/png"
-          })
-        });
-
-        const imagenData = await imagenResponse.json();
-        if (!imagenData.generatedImages || imagenData.generatedImages.length === 0) {
-          throw new Error("Модель Изображений отклонила генерацию по данному промпту.");
+      if (isFinance && financeData) {
+        setLoadingStatus('Синхронизация регистра...');
+        const financeFile = `${targetDir}Журнал_Финансов.md`;
+        let existingContent = '';
+        
+        const fileInfo = await FileSystem.getInfoAsync(financeFile);
+        if (fileInfo.exists) {
+          existingContent = await FileSystem.readAsStringAsync(financeFile);
+        } else {
+          existingContent = "---\ntype: finance_ledger\n---\n# Финансовый регистр\n\n| Дата | Операция | Сумма |\n|---|---|---|\n";
         }
-        
-        const base64ImageBytes = imagenData.generatedImages[0].image.imageBytes;
-        const localImageUri = `${attachmentsDir}${fileName}.png`;
-        
-        await FileSystem.writeAsStringAsync(localImageUri, base64ImageBytes, {
-          encoding: FileSystem.EncodingType.Base64
-        });
 
-        mdContent += `\n\n### Визуальный план действий\n![[../attachments/${fileName}.png]]`;
+        const dateStr = new Date().toLocaleDateString('ru-RU');
+        const newRow = `| ${dateStr} | ${financeData.item} | ${financeData.amount} ${financeData.currency} |\n`;
+        
+        await FileSystem.writeAsStringAsync(financeFile, existingContent + newRow, { encoding: FileSystem.EncodingType.UTF8 });
+        Alert.alert("Транзакция учтена", `${financeData.item}: ${financeData.amount} ${financeData.currency}`);
+      } else {
+        const timestamp = Date.now();
+        const safeSnippet = text.trim() ? text.trim().substring(0, 15).replace(/[^a-zA-Zа-яА-Я0-9]/g, '_') : 'voice';
+        const fileName = `${safeCategory}_${safeSnippet}_${timestamp}`;
+        let mdContent = markdown;
+
+        if (generateVisual && visualPrompt) {
+          setLoadingStatus('Рендеринг графа...');
+          const attachmentsDir = `${FileSystem.documentDirectory}attachments/`;
+          await FileSystem.makeDirectoryAsync(attachmentsDir, { intermediates: true });
+
+          const imgRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-002:generateImages?key=${GEMINI_API_KEY}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ numberOfImages: 1, prompt: visualPrompt, aspectRatio: "1:1", outputMimeType: "image/png" })
+          });
+
+          const imgData = await imgRes.json();
+          if (imgData.error) throw new Error(imgData.error.message);
+          
+          if (imgData.generatedImages) {
+            const localImageUri = `${attachmentsDir}${fileName}.png`;
+            await FileSystem.writeAsStringAsync(localImageUri, imgData.generatedImages[0].image.imageBytes, { encoding: FileSystem.EncodingType.Base64 });
+            mdContent += `\n\n### Инфографика\n![[../attachments/${fileName}.png]]`;
+          }
+        }
+
+        setLoadingStatus('Запись на диск...');
+        await FileSystem.writeAsStringAsync(`${targetDir}${fileName}.md`, mdContent, { encoding: FileSystem.EncodingType.UTF8 });
+        Alert.alert("Маршрут завершен", `Директория: ${safeCategory}`);
       }
 
-      setLoadingStatus('Сохранение файлов...');
-      const localMdUri = `${targetDir}${fileName}.md`;
-      await FileSystem.writeAsStringAsync(localMdUri, mdContent, { encoding: FileSystem.EncodingType.UTF8 });
-
-      Alert.alert("Успешно маршрутизировано", `Создана заметка в Obsidian-каталоге: ${secureCategory}`);
-      
-      // Сброс всех состояний после успешной обработки
       setText('');
       setAudioBase64(null);
     } catch (error) {
-      console.error(error);
-      Alert.alert("Сбой обработки", error.message);
+      Alert.alert("Сбой выполнения", error.message);
     } finally {
       setLoading(false);
       setLoadingStatus('');
@@ -205,16 +181,13 @@ export default function App() {
 
   return (
     <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
-      <KeyboardAvoidingView 
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'} 
-        style={styles.container}
-      >
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.container}>
         <Text style={styles.header}>Thought Router Pro</Text>
         
         <TextInput
           style={styles.input}
-          placeholder="Напишите мысль или воспользуйтесь диктофоном ниже..."
-          placeholderTextColor="#666"
+          placeholder="Ввод лога данных или активация аудио..."
+          placeholderTextColor="#8B7BA8"
           multiline
           value={text}
           onChangeText={(val) => { setText(val); setAudioBase64(null); }}
@@ -229,21 +202,19 @@ export default function App() {
             onPress={isRecording ? stopRecording : startRecording}
             disabled={loading}
           >
-            <Text style={styles.buttonText}>
-              {isRecording ? "⏹ Остановить запись" : "🎙 Записать голос"}
-            </Text>
+            <Text style={styles.buttonText}>{isRecording ? "⏹ Фиксация аудиопотока" : "🎙 Захват аудио"}</Text>
           </TouchableOpacity>
-          {audioBase64 && <Text style={styles.audioReadyText}>✓ Голосовая заметка добавлена</Text>}
+          {audioBase64 && <Text style={styles.audioReadyText}>✓ Бинарный аудио-блок загружен</Text>}
         </View>
 
         <View style={styles.switchContainer}>
-          <Text style={styles.switchLabel}>Сгенерировать визуальный план (Imagen 3)</Text>
+          <Text style={styles.switchLabel}>Векторная генерация схемы</Text>
           <Switch
             value={generateVisual}
             onValueChange={setGenerateVisual}
             disabled={loading}
-            trackColor={{ false: "#767577", true: "#007AFF" }}
-            thumbColor={generateVisual ? "#fff" : "#f4f3f4"}
+            trackColor={{ false: "#3F2C60", true: "#8B5CF6" }}
+            thumbColor={generateVisual ? "#E9D5FF" : "#8B7BA8"}
           />
         </View>
 
@@ -254,11 +225,11 @@ export default function App() {
         >
           {loading ? (
             <View style={styles.loadingRow}>
-              <ActivityIndicator color="#fff" style={{ marginRight: 10 }} />
+              <ActivityIndicator color="#E9D5FF" style={{ marginRight: 10 }} />
               <Text style={styles.loadingText}>{loadingStatus}</Text>
             </View>
           ) : (
-            <Text style={styles.buttonText}>Маршрутизировать в Obsidian</Text>
+            <Text style={styles.buttonText}>Инициировать маршрутизацию</Text>
           )}
         </TouchableOpacity>
       </KeyboardAvoidingView>
@@ -267,20 +238,20 @@ export default function App() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#121212', padding: 20, justifyContent: 'center' },
-  header: { fontSize: 26, fontWeight: 'bold', color: '#fff', marginBottom: 25, textAlign: 'center' },
-  input: { backgroundColor: '#1e1e1e', color: '#fff', padding: 15, borderRadius: 10, height: 120, textAlignVertical: 'top', fontSize: 16, marginBottom: 15 },
+  container: { flex: 1, backgroundColor: '#130A1F', padding: 20, justifyContent: 'center' },
+  header: { fontSize: 26, fontWeight: 'bold', color: '#E9D5FF', marginBottom: 25, textAlign: 'center', letterSpacing: 1 },
+  input: { backgroundColor: '#23153C', color: '#D8B4FE', padding: 15, borderRadius: 12, height: 120, textAlignVertical: 'top', fontSize: 16, marginBottom: 15, borderWidth: 1, borderColor: '#3F2C60' },
   audioSection: { alignItems: 'center', marginBottom: 20 },
-  audioButton: { width: '100%', padding: 12, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
-  recordingInactive: { backgroundColor: '#2c2c2c' },
-  recordingActive: { backgroundColor: '#FF3B30' },
-  audioReadyText: { color: '#4CD964', marginTop: 8, fontSize: 14, fontWeight: '500' },
-  switchContainer: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 25 },
-  switchLabel: { color: '#fff', fontSize: 15, flex: 1, paddingRight: 10 },
-  button: { padding: 15, borderRadius: 10, alignItems: 'center', height: 50, justifyContent: 'center' },
-  buttonEnabled: { backgroundColor: '#007AFF' },
-  buttonDisabled: { backgroundColor: '#48484A' },
-  buttonText: { color: '#fff', fontSize: 16, fontWeight: 'bold' },
+  audioButton: { width: '100%', padding: 14, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+  recordingInactive: { backgroundColor: '#3B2363' },
+  recordingActive: { backgroundColor: '#9D174D' },
+  audioReadyText: { color: '#10B981', marginTop: 8, fontSize: 13, fontWeight: '600' },
+  switchContainer: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 25, paddingHorizontal: 5 },
+  switchLabel: { color: '#C084FC', fontSize: 15, flex: 1 },
+  button: { padding: 16, borderRadius: 12, alignItems: 'center', height: 55, justifyContent: 'center' },
+  buttonEnabled: { backgroundColor: '#7C3AED', shadowColor: '#7C3AED', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 8, elevation: 5 },
+  buttonDisabled: { backgroundColor: '#3F2C60' },
+  buttonText: { color: '#FFFFFF', fontSize: 16, fontWeight: '700', letterSpacing: 0.5 },
   loadingRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center' },
-  loadingText: { color: '#fff', fontSize: 14, fontWeight: '500' }
+  loadingText: { color: '#E9D5FF', fontSize: 14, fontWeight: '600' }
 });
