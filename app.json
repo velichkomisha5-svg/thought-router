@@ -2,7 +2,7 @@
   "expo": {
     "name": "ThoughtRouter",
     "slug": "thought-router",
-    "version": "1.1.0",
+    "version": "1.4.0",
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
     "ios": {
@@ -11,6 +11,8 @@
       "supportsDocumentBrowser": true,
       "infoPlist": {
         "NSMicrophoneUsageDescription": "Доступ к микрофону необходим для записи аудиозаметок.",
+        "NSCalendarsUsageDescription": "Доступ к календарю необходим для автоматической синхронизации задач и дедлайнов.",
+        "NSRemindersUsageDescription": "Доступ к напоминаниям необходим для синхронизации списков дел.",
         "UIFileSharingEnabled": true,
         "LSSupportsOpeningDocumentsInPlace": true
       }
