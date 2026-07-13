@@ -5,19 +5,10 @@ import {
   TouchableWithoutFeedback, Keyboard, Platform 
 } from 'react-native';
 import * as FileSystem from 'expo-file-system';
-import * as Notifications from 'expo-notifications';
+import * as Calendar from 'expo-calendar';
 import { Audio } from 'expo-av';
 
 const GEMINI_API_KEY = "AQ.Ab8RN6JjHcuOOg-U0O5CQx9KD7FVjjKUVT70-HoVTK2sy5cgVg";
-
-// Настройка поведения уведомлений на переднем плане
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowAlert: true,
-    shouldPlaySound: true,
-    shouldSetBadge: false,
-  }),
-});
 
 export default function App() {
   const [view, setView] = useState('input'); // 'input' | 'dashboard' | 'finance'
@@ -44,9 +35,7 @@ export default function App() {
   const [folders, setFolders] = useState(['Учеба', 'Работа', 'ПК', 'Здоровье', 'Финансы']);
 
   useEffect(() => {
-    // Инициализация разрешений и дефолтных настроек аудио
     const initApp = async () => {
-      await Notifications.requestPermissionsAsync();
       loadFolders();
       initFinanceStorage();
     };
@@ -81,7 +70,6 @@ export default function App() {
         return;
       }
 
-      // Безопасный перезапуск аудио-сессии для предотвращения зависаний в iOS
       await Audio.setAudioModeAsync({ allowsRecordingIOS: false });
       await Audio.setAudioModeAsync({
         allowsRecordingIOS: true,
@@ -116,7 +104,6 @@ export default function App() {
     }
   };
 
-  // Метод перехода в папку
   const openFolder = async (folderName) => {
     try {
       const dirPath = `${FileSystem.documentDirectory}${folderName}/`;
@@ -129,7 +116,6 @@ export default function App() {
     }
   };
 
-  // Метод открытия файла заметок
   const openFile = async (fileName) => {
     try {
       const filePath = `${FileSystem.documentDirectory}${currentFolder}/${fileName}`;
@@ -172,6 +158,11 @@ export default function App() {
     await FileSystem.writeAsStringAsync(`${dir}Журнал_Финансов.md`, md, { encoding: FileSystem.EncodingType.UTF8 });
   };
 
+  const requestCalendarPermission = async () => {
+    const { status } = await Calendar.requestCalendarPermissionsAsync();
+    return status === 'granted';
+  };
+
   const handleProcess = async () => {
     if (!text.trim() && !audioBase64) return;
     setLoading(true);
@@ -209,7 +200,7 @@ export default function App() {
         body.contents[0].parts.push({ inlineData: { mimeType: "audio/m4a", data: audioBase64 } });
       } else {
         setLoadingStatus('Синтаксический анализ лога...');
-        body.contents[0].parts.push({ text: `Input: "${text}" (Current date: 2026-07-13)` });
+        body.contents[0].parts.push({ text: `Input: "${text}" (Current date: 2026-07-14)` });
       }
 
       const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${GEMINI_API_KEY}`, {
@@ -227,7 +218,6 @@ export default function App() {
       const targetDir = `${FileSystem.documentDirectory}${finalCategory}/`;
       await FileSystem.makeDirectoryAsync(targetDir, { intermediates: true });
 
-      // Логика финансов
       if (result.isFinance && result.finance) {
         setLoadingStatus('Дозапись в финансовый реестр...');
         const jsonPath = `${FileSystem.documentDirectory}Финансы/data.json`;
@@ -235,7 +225,6 @@ export default function App() {
         const currentData = JSON.parse(rawJson);
 
         if (result.isSubscription) {
-          // Исключение дубликатов подписок
           currentData.subscriptions = currentData.subscriptions.filter(s => s.item.toLowerCase() !== result.finance.item.toLowerCase());
           currentData.subscriptions.push({
             item: result.finance.item,
@@ -256,28 +245,37 @@ export default function App() {
         await syncObsidianFinance(currentData);
         Alert.alert("Транзакция учтена", `${result.finance.item}: ${result.finance.amount} ${result.finance.currency}`);
       } else {
-        // Логика сохранения стандартной заметки
         const fileName = `${finalCategory}_Note_${Date.now()}.md`;
         await FileSystem.writeAsStringAsync(`${targetDir}${fileName}`, result.markdown, { encoding: FileSystem.EncodingType.UTF8 });
         Alert.alert("Заметка создана", `Файл сохранен в каталог: ${finalCategory}`);
       }
 
-      // Планирование push-уведомлений на iOS
+      // Запись события в системный календарь iOS (синхронизируется с Google Календарем)
       if (result.reminder && result.reminder.needed) {
-        setLoadingStatus('Установка локального таймера...');
-        const triggerTime = new Date(result.reminder.triggerDate).getTime();
-        const delay = (triggerTime - Date.now()) / 1000;
+        setLoadingStatus('Интеграция с календарем...');
+        const hasPermission = await requestCalendarPermission();
+        if (hasPermission) {
+          const calendars = await Calendar.getCalendarsAsync(Calendar.EntityTypes.EVENT);
+          const writableCalendars = calendars.filter(c => c.allowsModifications);
+          
+          if (writableCalendars.length > 0) {
+            const defaultCalendar = writableCalendars.find(c => c.isPrimary) || writableCalendars[0];
+            const startDate = new Date(result.reminder.triggerDate);
+            const endDate = new Date(startDate.getTime() + 60 * 60 * 1000); // Длительность события 1 час
 
-        if (delay > 0) {
-          await Notifications.scheduleNotificationAsync({
-            content: {
+            await Calendar.createEventAsync(defaultCalendar.id, {
               title: result.reminder.title,
-              body: result.reminder.body,
-              sound: true,
-            },
-            trigger: { seconds: Math.max(1, Math.floor(delay)) },
-          });
-          Alert.alert("Напоминание установлено", `${result.reminder.title} на ${new Date(result.reminder.triggerDate).toLocaleString()}`);
+              startDate: startDate,
+              endDate: endDate,
+              notes: result.reminder.body,
+              timeZone: 'GMT',
+            });
+            Alert.alert("Календарь обновлен", `Событие "${result.reminder.title}" добавлено в ваш системный календарь.`);
+          } else {
+            Alert.alert("Ошибка", "Доступные для записи календари не найдены.");
+          }
+        } else {
+          Alert.alert("Доступ отклонен", "Необходимо разрешение на использование календаря устройства.");
         }
       }
 
@@ -298,7 +296,6 @@ export default function App() {
       <View style={styles.container}>
         <Text style={styles.header}>Thought Router Pro</Text>
 
-        {/* Навигационное меню */}
         <View style={styles.nav}>
           <TouchableOpacity onPress={() => setView('input')} style={[styles.navBtn, view === 'input' && styles.navBtnActive]}>
             <Text style={styles.navText}>Ввод</Text>
@@ -358,7 +355,6 @@ export default function App() {
 
           {view === 'dashboard' && (
             <View>
-              {/* Проводник */}
               {!currentFolder ? (
                 <View>
                   <Text style={styles.label}>Локальные каталоги:</Text>
