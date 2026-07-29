@@ -1,40 +1,74 @@
-import React from 'react';
-import { StyleSheet, Text, View, TextInput, TouchableOpacity } from 'react-native';
-import { useSettings } from '../context/SettingsContext';
-import { useCalendar } from '../context/CalendarContext';
+import React, { useState, useEffect } from 'react';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, Alert, ScrollView } from 'react-native';
+import { Feather } from '@expo/vector-icons';
+import * as SecureStore from 'expo-secure-store';
+import { SECURE_KEY_ALIAS, COLORS } from '../config/constants';
 
-export default function Settings({ setView }) {
-  const { apiKey, saveApiKey, clearApiKey } = useSettings();
-  const { availableCalendars, selectedCalendarId, setSelectedCalendarId, permissionStatus, accessPrivileges } = useCalendar();
+export default function Settings() {
+  const [apiKey, setApiKey] = useState('');
+
+  useEffect(() => {
+    loadKey();
+  }, []);
+
+  const loadKey = async () => {
+    const saved = await SecureStore.getItemAsync(SECURE_KEY_ALIAS);
+    if (saved) setApiKey(saved);
+  };
+
+  const saveKey = async () => {
+    await SecureStore.setItemAsync(SECURE_KEY_ALIAS, apiKey.trim());
+    Alert.alert("Сохранено", "API-ключ сохранен в SecureStore");
+  };
 
   return (
-    <View>
-      <TouchableOpacity style={styles.backBtn} onPress={() => setView('dashboard')}><Text style={styles.backBtnText}>← Меню</Text></TouchableOpacity>
-      <Text style={styles.label}>Ключ Gemini API:</Text>
-      <TextInput style={styles.input} secureTextEntry placeholder="API KEY" placeholderTextColor="#8B7BA8" onChangeText={saveApiKey} defaultValue={apiKey} />
-      <TouchableOpacity style={styles.delBtn} onPress={clearApiKey}><Text style={styles.btnText}>Очистить Keychain</Text></TouchableOpacity>
-
-      <Text style={[styles.label, { marginTop: 20 }]}>Выбрать календарь iOS:</Text>
-      {(permissionStatus !== 'granted' || accessPrivileges === 'writeOnly') && (
-        <Text style={styles.warn}>Предоставьте полный доступ к календарям в настройках iOS.</Text>
-      )}
-      {availableCalendars.map(c => (
-        <TouchableOpacity key={c.id} style={[styles.cal, selectedCalendarId === c.id && styles.calActive]} onPress={() => setSelectedCalendarId(c.id)}>
-          <Text style={styles.text}>{c.title}</Text>
+    <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
+      <Text style={styles.header}>Settings</Text>
+      <Text style={styles.subHeader}>Integrations & Security</Text>
+      <View style={styles.sectionCard}>
+        <View style={styles.secTitleRow}>
+          <Feather name="key" size={16} color={COLORS.textPrimary} />
+          <Text style={styles.secTitle}>API Credentials</Text>
+        </View>
+        <Text style={styles.label}>GEMINI API KEY</Text>
+        <TextInput
+          style={styles.input}
+          placeholder="Enter Key..."
+          placeholderTextColor={COLORS.textMuted}
+          secureTextEntry
+          value={apiKey}
+          onChangeText={setApiKey}
+        />
+        <TouchableOpacity style={styles.saveBtn} onPress={saveKey}>
+          <Text style={styles.saveTxt}>Save Key</Text>
         </TouchableOpacity>
-      ))}
-    </View>
+      </View>
+      <View style={styles.sectionCard}>
+        <View style={styles.secTitleRow}>
+          <Feather name="user" size={16} color={COLORS.textPrimary} />
+          <Text style={styles.secTitle}>Connected Accounts</Text>
+        </View>
+        <View style={styles.accountRow}>
+          <Text style={styles.accTitle}>Google Workspace</Text>
+          <Text style={styles.accConnected}>Configured via Google Sync</Text>
+        </View>
+      </View>
+    </ScrollView>
   );
 }
+
 const styles = StyleSheet.create({
-  backBtn: { alignSelf: 'flex-start', padding: 8, backgroundColor: '#3B2363', borderRadius: 8, marginBottom: 15 },
-  backBtnText: { color: '#A78BFA', fontWeight: 'bold' },
-  label: { color: '#A78BFA', fontWeight: 'bold', marginBottom: 5 },
-  input: { backgroundColor: '#1E1135', color: '#fff', padding: 12, borderRadius: 10, marginBottom: 10 },
-  delBtn: { backgroundColor: '#FF3B30', padding: 12, borderRadius: 10, alignItems: 'center' },
-  btnText: { color: '#fff', fontWeight: 'bold' },
-  warn: { color: '#F59E0B', marginBottom: 10 },
-  cal: { backgroundColor: '#1E1135', padding: 12, borderRadius: 10, marginBottom: 5 },
-  calActive: { backgroundColor: '#2E1065', borderColor: '#8B5CF6', borderWidth: 1 },
-  text: { color: '#fff' }
+  container: { flex: 1, backgroundColor: COLORS.bgPrimary, paddingHorizontal: 20, paddingTop: 10 },
+  header: { fontSize: 28, fontWeight: 'bold', color: COLORS.textPrimary },
+  subHeader: { color: COLORS.textMuted, fontSize: 13, marginBottom: 20 },
+  sectionCard: { backgroundColor: COLORS.surface, padding: 18, borderRadius: 18, borderWidth: 1, borderColor: COLORS.border, marginBottom: 20 },
+  secTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 15 },
+  secTitle: { color: COLORS.textPrimary, fontSize: 16, fontWeight: 'bold' },
+  label: { color: COLORS.textMuted, fontSize: 10, fontWeight: 'bold', marginBottom: 6 },
+  input: { backgroundColor: COLORS.bgPrimary, color: COLORS.textPrimary, padding: 12, borderRadius: 10, borderWidth: 1, borderColor: COLORS.border, marginBottom: 12 },
+  saveBtn: { backgroundColor: COLORS.accentPrimary, padding: 12, borderRadius: 10, alignItems: 'center' },
+  saveTxt: { color: '#FFF', fontWeight: 'bold' },
+  accountRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: COLORS.bgPrimary, padding: 12, borderRadius: 10 },
+  accTitle: { color: COLORS.textPrimary, fontWeight: 'bold' },
+  accConnected: { color: COLORS.success, fontSize: 12 }
 });
