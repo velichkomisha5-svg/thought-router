@@ -1,110 +1,160 @@
-import React, { useState } from 'react';
-import { StyleSheet, Text, View, TouchableOpacity, ScrollView, Alert, Image } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { View, Text, ScrollView, StyleSheet, TouchableOpacity, TextInput, Image } from 'react-native';
+import { Feather, Ionicons } from '@expo/vector-icons';
 import * as FileSystem from 'expo-file-system';
-import { writeAtomic, FIXED_CATEGORIES, RESERVED_NAMES } from '../services/storage';
+import { COLORS } from '../config/constants';
 
-export default function Explorer({ setView }) {
+const VAULT_PATH = `${FileSystem.documentDirectory}ObsidianVault/`;
+
+export default function Explorer() {
+  const [items, setItems] = useState([]);
+  const [search, setSearch] = useState('');
   const [currentFolder, setCurrentFolder] = useState(null);
-  const [filesInFolder, setFilesInFolder] = useState([]);
-  const [viewingFile, setViewingFile] = useState(null);
-  const [fileContent, setFileContent] = useState('');
-  const [folderCreating, setFolderCreating] = useState(false);
-  const [fileCreating, setFileCreating] = useState(false);
+  const [selectedFile, setSelectedFile] = useState(null);
+  const [content, setContent] = useState('');
 
-  const openFolder = async (folder) => {
-    try {
-      const files = await FileSystem.readDirectoryAsync(`${FileSystem.documentDirectory}${folder}/`);
-      setFilesInFolder(files.filter(f => f.endsWith('.md') || f.endsWith('.txt')));
-      setCurrentFolder(folder);
-    } catch (e) { setCurrentFolder(folder); setFilesInFolder([]); }
-  };
-
-  const openFile = async (file) => {
-    const content = await FileSystem.readAsStringAsync(`${FileSystem.documentDirectory}${currentFolder}/${file}`);
-    setFileContent(content); setViewingFile(file);
-  };
-
-  const deleteFile = async (file) => {
-    Alert.alert("Удаление", "Удалить файл?", [
-      { text: "Отмена" },
-      { text: "Удалить", onPress: async () => {
-        await FileSystem.deleteAsync(`${FileSystem.documentDirectory}${currentFolder}/${file}`);
-        setViewingFile(null); openFolder(currentFolder);
-      }}
-    ]);
-  };
-
-  const createManualFolder = async (name) => {
-    if (folderCreating || !name || !name.trim()) return;
-    const sanitized = name.replace(/[^a-zA-Zа-яА-Я0-9\s-]/g, '').trim();
-    if (RESERVED_NAMES.includes(sanitized.toLowerCase())) { Alert.alert("Ошибка", "Зарезервировано"); return; }
-    setFolderCreating(true);
-    try {
-      await FileSystem.makeDirectoryAsync(`${FileSystem.documentDirectory}${sanitized}/`, { intermediates: true });
-      openFolder(sanitized);
-    } finally { setFolderCreating(false); }
-  };
-
-  const createManualFile = async (title) => {
-    if (fileCreating || !title || !title.trim()) return;
-    const path = `${FileSystem.documentDirectory}${currentFolder}/${title}.md`;
-    if ((await FileSystem.getInfoAsync(path)).exists) { Alert.alert("Ошибка", "Уже есть"); return; }
-    setFileCreating(true);
-    try {
-      await writeAtomic(path, "# " + title);
-      openFolder(currentFolder);
-    } finally { setFileCreating(false); }
-  };
-
-  const renderMarkdown = (content) => {
-    const regex = /!\[\[\.\.\/attachments\/(.+?)\]\]/g;
-    const parts = []; let lastIndex = 0; let match;
-    while ((match = regex.exec(content)) !== null) {
-      if (content.substring(lastIndex, match.index)) parts.push(<Text key={lastIndex} style={styles.text}>{content.substring(lastIndex, match.index)}</Text>);
-      parts.push(<Image key={match.index} source={{ uri: `${FileSystem.documentDirectory}attachments/${match[1]}` }} style={styles.img} resizeMode="contain" />);
-      lastIndex = regex.lastIndex;
+  useEffect(() => {
+    if (currentFolder) {
+      loadFiles(currentFolder);
+    } else {
+      loadFoldersAndRootFiles();
     }
-    if (content.substring(lastIndex)) parts.push(<Text key={lastIndex} style={styles.text}>{content.substring(lastIndex)}</Text>);
-    return parts;
+  }, [currentFolder]);
+
+  const loadFoldersAndRootFiles = async () => {
+    try {
+      const dirInfo = await FileSystem.getInfoAsync(VAULT_PATH);
+      if (!dirInfo.exists) await FileSystem.makeDirectoryAsync(VAULT_PATH, { intermediates: true });
+      const dirContents = await FileSystem.readDirectoryAsync(VAULT_PATH);
+      
+      let validItems = [];
+      for (const item of dirContents) {
+        const info = await FileSystem.getInfoAsync(`${VAULT_PATH}${item}`);
+        if (info.isDirectory) {
+          validItems.push({ name: item, isDir: true });
+        } else if (item.endsWith('.md') || item.endsWith('.png')) {
+          validItems.push({ name: item, isDir: false });
+        }
+      }
+      setItems(validItems);
+      setSelectedFile(null);
+    } catch (e) {}
   };
+
+  const loadFiles = async (folderName) => {
+    try {
+      const path = `${VAULT_PATH}${folderName}/`;
+      const files = await FileSystem.readDirectoryAsync(path);
+      setItems(files.filter(f => f.endsWith('.md') || f.endsWith('.png')).map(f => ({ name: f, isDir: false })));
+    } catch (e) {}
+  };
+
+  const openFile = async (name) => {
+    try {
+      const path = currentFolder ? `${VAULT_PATH}${currentFolder}/${name}` : `${VAULT_PATH}${name}`;
+      if (name.endsWith('.md')) {
+        const text = await FileSystem.readAsStringAsync(path);
+        setContent(text);
+      } else {
+        setContent(path);
+      }
+      setSelectedFile(name);
+    } catch (e) {}
+  };
+
+  const handleBack = () => {
+    setCurrentFolder(null);
+    setSearch('');
+    setSelectedFile(null);
+    setContent('');
+  };
+
+  const handleFolderEntry = (folderName) => {
+    setCurrentFolder(folderName);
+    setSearch('');
+    setSelectedFile(null);
+    setContent('');
+  };
+
+  const filteredItems = items.filter(i => i.name.toLowerCase().includes(search.toLowerCase()));
 
   return (
-    <View>
-      <TouchableOpacity style={styles.backBtn} onPress={() => setView('dashboard')}><Text style={styles.backBtnText}>← Меню</Text></TouchableOpacity>
-      {!currentFolder ? (
-        <View>
-          {FIXED_CATEGORIES.map(f => (
-            <TouchableOpacity key={f} style={styles.item} onPress={() => openFolder(f)}><Text style={styles.itemText}>📁 {f}</Text></TouchableOpacity>
+    <View style={styles.container}>
+      <View style={styles.headerRow}>
+        {currentFolder && (
+          <TouchableOpacity onPress={handleBack} style={styles.backBtn}>
+            <Ionicons name="arrow-back" size={24} color={COLORS.textPrimary} />
+          </TouchableOpacity>
+        )}
+        <Text style={styles.header}>{currentFolder || 'Explorer'}</Text>
+      </View>
+      <View style={styles.searchCard}>
+        <Feather name="search" size={18} color={COLORS.textMuted} style={styles.searchIcon} />
+        <TextInput
+          style={styles.searchInput}
+          placeholder="Поиск..."
+          placeholderTextColor={COLORS.textMuted}
+          value={search}
+          onChangeText={setSearch}
+        />
+        <Feather name="sliders" size={18} color={COLORS.textMuted} />
+      </View>
+      <ScrollView style={styles.body} showsVerticalScrollIndicator={false}>
+        <Text style={styles.sectionTitle}>{currentFolder ? 'Files' : 'Directory'}</Text>
+        <View style={styles.dirCard}>
+          {filteredItems.map((item, idx) => (
+            item.isDir ? (
+              <TouchableOpacity key={idx} style={styles.folderRow} onPress={() => handleFolderEntry(item.name)}>
+                <Ionicons name="folder" size={20} color={COLORS.accentSecondary} />
+                <Text style={styles.folderName}>{item.name}</Text>
+                <Feather name="chevron-right" size={18} color={COLORS.textMuted} style={{ marginLeft: 'auto' }} />
+              </TouchableOpacity>
+            ) : (
+              <TouchableOpacity key={idx} style={styles.fileRow} onPress={() => openFile(item.name)}>
+                <Feather name={item.name.endsWith('.png') ? "image" : "file-text"} size={16} color={COLORS.textMuted} />
+                <Text style={styles.fileName}>{item.name}</Text>
+              </TouchableOpacity>
+            )
           ))}
-          <TouchableOpacity style={styles.btn} onPress={() => Alert.prompt("Папка", "Имя", createManualFolder)}><Text style={styles.btnText}>+ Создать папку</Text></TouchableOpacity>
+          {filteredItems.length === 0 && <Text style={styles.emptyText}>Пусто</Text>}
         </View>
-      ) : !viewingFile ? (
-        <View>
-          <TouchableOpacity style={styles.backBtn} onPress={() => setCurrentFolder(null)}><Text style={styles.backBtnText}>← Папки</Text></TouchableOpacity>
-          {filesInFolder.map(f => (
-            <TouchableOpacity key={f} style={styles.item} onPress={() => openFile(f)}><Text style={styles.itemText}>📄 {f}</Text></TouchableOpacity>
-          ))}
-          <TouchableOpacity style={styles.btn} onPress={() => Alert.prompt("Файл", "Имя", createManualFile)}><Text style={styles.btnText}>+ Создать файл</Text></TouchableOpacity>
-        </View>
-      ) : (
-        <View>
-          <TouchableOpacity style={styles.backBtn} onPress={() => setViewingFile(null)}><Text style={styles.backBtnText}>← Файлы</Text></TouchableOpacity>
-          <ScrollView style={styles.viewer}>{renderMarkdown(fileContent)}</ScrollView>
-          <TouchableOpacity style={styles.delBtn} onPress={() => deleteFile(viewingFile)}><Text style={styles.btnText}>Удалить заметку</Text></TouchableOpacity>
-        </View>
-      )}
+        {selectedFile && (
+          <View style={styles.readerCard}>
+            <View style={styles.readerHeader}>
+              <Feather name={selectedFile.endsWith('.png') ? "image" : "file-text"} size={18} color={COLORS.accentSecondary} />
+              <Text style={styles.readerTitle}>{selectedFile}</Text>
+            </View>
+            {selectedFile.endsWith('.png') ? (
+              <Image source={{ uri: content }} style={styles.imagePreview} />
+            ) : (
+              <Text style={styles.readerText}>{content}</Text>
+            )}
+          </View>
+        )}
+      </ScrollView>
     </View>
   );
 }
+
 const styles = StyleSheet.create({
-  backBtn: { alignSelf: 'flex-start', padding: 8, backgroundColor: '#3B2363', borderRadius: 8, marginBottom: 15 },
-  backBtnText: { color: '#A78BFA', fontWeight: 'bold' },
-  item: { backgroundColor: '#1E1135', padding: 15, borderRadius: 12, marginBottom: 10 },
-  itemText: { color: '#DDD6FE', fontSize: 16 },
-  btn: { backgroundColor: '#7C3AED', padding: 15, borderRadius: 12, alignItems: 'center' },
-  btnText: { color: '#fff', fontWeight: 'bold' },
-  viewer: { backgroundColor: '#1E1135', padding: 15, borderRadius: 15, minHeight: 150 },
-  text: { color: '#EDE9FE', fontSize: 14, lineHeight: 20 },
-  img: { width: '100%', height: 300, marginVertical: 15 },
-  delBtn: { backgroundColor: '#FF3B30', padding: 15, borderRadius: 12, alignItems: 'center', marginTop: 15 }
+  container: { flex: 1, backgroundColor: COLORS.bgPrimary, paddingHorizontal: 20, paddingTop: 10 },
+  headerRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 15 },
+  backBtn: { marginRight: 15 },
+  header: { fontSize: 28, fontWeight: 'bold', color: COLORS.textPrimary },
+  searchCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: COLORS.surface, paddingHorizontal: 15, borderRadius: 14, borderWidth: 1, borderColor: COLORS.border, marginBottom: 20 },
+  searchIcon: { marginRight: 10 },
+  searchInput: { flex: 1, color: COLORS.textPrimary, paddingVertical: 12, fontSize: 14 },
+  body: { flex: 1 },
+  sectionTitle: { color: COLORS.textPrimary, fontSize: 16, fontWeight: 'bold', marginBottom: 10 },
+  dirCard: { backgroundColor: COLORS.surface, borderRadius: 16, padding: 15, borderWidth: 1, borderColor: COLORS.border, marginBottom: 20 },
+  folderRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#2D1D4A' },
+  folderName: { color: COLORS.textPrimary, fontSize: 15, fontWeight: '600' },
+  fileRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 10 },
+  fileName: { color: COLORS.textMuted, fontSize: 14 },
+  emptyText: { color: COLORS.textMuted, textAlign: 'center', paddingVertical: 10 },
+  readerCard: { backgroundColor: COLORS.surface, borderRadius: 18, padding: 20, borderWidth: 1, borderColor: COLORS.accentPrimary, marginBottom: 30 },
+  readerHeader: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 15 },
+  readerTitle: { flex: 1, color: COLORS.textPrimary, fontSize: 16, fontWeight: 'bold' },
+  readerText: { color: COLORS.textPrimary, fontSize: 14, lineHeight: 22 },
+  imagePreview: { width: '100%', height: 300, resizeMode: 'contain', borderRadius: 12, marginTop: 10 }
 });
